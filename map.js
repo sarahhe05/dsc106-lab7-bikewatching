@@ -15,6 +15,11 @@ let timeFilter = -1;
 let svg;
 let circles;
 
+// Add this with other global variables
+const stationFlow = d3.scaleQuantize()
+    .domain([0, 1])
+    .range([0, 0.5, 1]);
+
 // Function to calculate minutes since midnight
 function minutesSinceMidnight(date) {
     return date.getHours() * 60 + date.getMinutes();
@@ -79,13 +84,15 @@ map.on('load', async () => {
 
         // Initialize circles with key function
         circles = svg.selectAll('circle')
-            .data(stations, d => d.short_name)  // Use short_name as key
+            .data(stations, d => d.short_name)
             .join('circle')
-            .attr('fill', 'steelblue')
             .attr('fill-opacity', 0.6)
             .attr('stroke', 'white')
             .attr('stroke-width', 1)
-            .attr('pointer-events', 'auto');
+            .attr('pointer-events', 'auto')
+            .style('--departure-ratio', d => 
+                stationFlow(d.totalTraffic ? d.departures / d.totalTraffic : 0)
+            );
 
         // Set up event listeners
         const timeSlider = document.getElementById('time-slider');
@@ -178,6 +185,11 @@ function updateScatterPlot(filteredStations) {
         .domain([0, maxTraffic || 1])  // Ensure non-zero domain
         .range([3, 50]);  // Adjust the range based on time filter
 
+    // Create a color scale
+    const colorScale = d3.scaleQuantize()
+        .domain([0, 1])
+        .range(['darkorange', 'purple', 'steelblue']);
+
     // Select and bind data to circles
     const circles = svg.selectAll('circle')
         .data(filteredStations, d => d.short_name);  // Use short_name as the key
@@ -185,10 +197,10 @@ function updateScatterPlot(filteredStations) {
     // Handle entering new circles
     const enterCircles = circles.enter()
         .append('circle')
-        .attr('fill', 'steelblue')
+        .attr('fill-opacity', 0.6)
         .attr('stroke', 'white')
         .attr('stroke-width', 1)
-        .attr('opacity', 0.6);
+        .attr('pointer-events', 'auto');
 
     // Merge and update circles, transition radius based on totalTraffic
     circles.merge(enterCircles)
@@ -198,6 +210,10 @@ function updateScatterPlot(filteredStations) {
             const radius = radiusScale(d.totalTraffic);
             console.log('Station:', d.name, 'Traffic:', d.totalTraffic, 'Radius:', radius);
             return radius;
+        })
+        .attr('fill', d => {
+            const ratio = d.totalTraffic ? d.departures / d.totalTraffic : 0;
+            return colorScale(ratio);
         });
 
     // Remove old circles
@@ -205,6 +221,16 @@ function updateScatterPlot(filteredStations) {
 
     // Ensure positions are updated after radius change
     updatePositions();
+
+    // Update tooltips
+    circles.selectAll('title').remove();
+    circles.append('title')
+        .text(d => {
+            const flowRatio = d.totalTraffic ? d.departures / d.totalTraffic : 0;
+            return `${d.name}\n${d.totalTraffic} trips ` +
+                   `(${d.departures} departures, ${d.arrivals} arrivals)\n` +
+                   `Flow ratio: ${(flowRatio * 100).toFixed(1)}% departures`;
+        });
 }
 
 // Time slider event handling
@@ -275,14 +301,31 @@ function updateFilteredData() {
 
     // Update circles with transition
     circles.data(filteredStations)
+        .join(
+            enter => enter.append('circle')
+                .attr('fill-opacity', 0.6)
+                .attr('stroke', 'white')
+                .attr('stroke-width', 1)
+                .attr('pointer-events', 'auto'),
+            update => update,
+            exit => exit.remove()
+        )
         .transition()
         .duration(500)
         .attr('r', d => radiusScale(d.totalTraffic))
         .attr('cx', d => getCoords(d).x)
-        .attr('cy', d => getCoords(d).y);
+        .attr('cy', d => getCoords(d).y)
+        .style('--departure-ratio', d => 
+            stationFlow(d.totalTraffic ? d.departures / d.totalTraffic : 0)
+        );
 
     // Update tooltips
     circles.selectAll('title').remove();
     circles.append('title')
-        .text(d => `${d.name}\n${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`);
+        .text(d => {
+            const flowRatio = d.totalTraffic ? d.departures / d.totalTraffic : 0;
+            return `${d.name}\n${d.totalTraffic} trips ` +
+                   `(${d.departures} departures, ${d.arrivals} arrivals)\n` +
+                   `Flow ratio: ${(flowRatio * 100).toFixed(1)}% departures`;
+        });
 }

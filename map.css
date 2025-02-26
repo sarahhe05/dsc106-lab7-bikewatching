@@ -22,3 +22,59 @@ html, body {
     height: 100%;
     pointer-events: none;  // So it doesn't interfere with map interactions
   }
+
+:root {
+    --color-departures: steelblue;
+    --color-arrivals: darkorange;
+}
+
+/* Circle styles */
+circle {
+    cursor: pointer;
+    stroke: white;
+    stroke-width: 1;
+    opacity: 0.8;
+}
+
+/* Legend container */
+.legend {
+    position: absolute;
+    bottom: 20px;
+    right: 20px;
+    background: white;
+    padding: 12px;
+    border-radius: 4px;
+    box-shadow: 0 0 10px rgba(0,0,0,0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    font-size: 14px;
+    z-index: 1000;  /* Add this to ensure legend appears above map */
+}
+
+/* Legend title */
+.legend-title {
+    font-weight: 500;
+    margin-bottom: 4px;
+}
+
+/* Legend items */
+.legend > div {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Legend swatches */
+.legend > div::before {
+    content: "";
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    border: 1px solid #fff;
+    background: color-mix(
+        in oklch,
+        var(--color-departures) calc(100% * var(--departure-ratio)),
+        var(--color-arrivals)
+    );
+}
