@@ -5,23 +5,22 @@ mapboxgl.accessToken = 'pk.eyJ1Ijoic2FyYWhoZTA1IiwiYSI6ImNtN2NxdDR2djA3OTIycnB0O
 const map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/streets-v12',
-    center: [-71.09415, 42.36027], // Boston coordinates
-    zoom: 12,
-    minZoom: 5,
-    maxZoom: 18
+    center: [-71.0892, 42.3398],
+    zoom: 12
 });
 
 let stations = [];
 let trips = [];
 let timeFilter = -1;
 let svg;
+let circles;
 
 // Function to calculate minutes since midnight
 function minutesSinceMidnight(date) {
     return date.getHours() * 60 + date.getMinutes();
 }
 
-map.on('load', () => {
+map.on('load', async () => {
     // Boston bike lanes
     map.addSource('boston_route', {
         type: 'geojson',
@@ -48,28 +47,56 @@ map.on('load', () => {
         paint: { 'line-color': '#32D400', 'line-width': 5, 'line-opacity': 0.6 }
     });
 
-    // Initialize the SVG element
-    svg = d3.select('#map').select('svg');
+    // Create SVG overlay after map initialization
+    svg = d3.select(map.getCanvasContainer())
+        .append('svg')
+        .style('position', 'absolute')
+        .style('top', 0)
+        .style('left', 0)
+        .style('width', '100%')
+        .style('height', '100%')
+        .style('pointer-events', 'none');
 
     // Load both station and traffic data
     const stationUrl = 'https://dsc106.com/labs/lab07/data/bluebikes-stations.json';
     const trafficUrl = 'https://dsc106.com/labs/lab07/data/bluebikes-traffic-2024-03.csv';
 
-    Promise.all([d3.json(stationUrl), d3.csv(trafficUrl)]).then(([stationData, tripData]) => {
+    try {
+        // Load stations
+        const stationResponse = await fetch('https://dsc106.com/labs/lab07/data/bluebikes-stations.json');
+        const stationData = await stationResponse.json();
         stations = stationData.data.stations;
-        trips = tripData;
 
-        // Convert start and end times to Date objects
-        trips.forEach(trip => {
-            trip.started_at = new Date(trip.start_time);
-            trip.ended_at = new Date(trip.end_time);
-        });
+        // Load and parse trips
+        trips = await d3.csv(
+            'https://dsc106.com/labs/lab07/data/bluebikes-traffic-2024-03.csv',
+            (trip) => ({
+                ...trip,
+                started_at: new Date(trip.started_at),
+                ended_at: new Date(trip.ended_at)
+            })
+        );
 
-        // Initial filter with all data
-        filterTripsByTime();
-    }).catch(error => {
-        console.error('Error loading JSON or CSV:', error);
-    });
+        // Initialize circles with key function
+        circles = svg.selectAll('circle')
+            .data(stations, d => d.short_name)  // Use short_name as key
+            .join('circle')
+            .attr('fill', 'steelblue')
+            .attr('fill-opacity', 0.6)
+            .attr('stroke', 'white')
+            .attr('stroke-width', 1)
+            .attr('pointer-events', 'auto');
+
+        // Set up event listeners
+        const timeSlider = document.getElementById('time-slider');
+        timeSlider.addEventListener('input', updateTimeDisplay);
+
+        // Initial update
+        updateTimeDisplay();
+
+    } catch (error) {
+        console.error('Error loading data:', error);
+    }
 });
 
 // Convert coordinates to pixel values
@@ -126,11 +153,11 @@ function filterTripsByTime() {
         return newStation;
     });
 
-    updateVisualization(filteredStations);
+    updateScatterPlot(filteredStations);
 }
 
 // Update the visualization with filtered data
-function updateVisualization(filteredStations) {
+function updateScatterPlot(filteredStations) {
     // Check if filteredStations is not empty before proceeding
     if (filteredStations.length === 0) {
         console.warn('No filtered stations to visualize.');
@@ -192,7 +219,7 @@ function formatTime(minutes) {
 }
 
 // Update time display and filter data when slider moves
-timeSlider.addEventListener('input', () => {
+function updateTimeDisplay() {
     timeFilter = Number(timeSlider.value);
     
     if (timeFilter === -1) {
@@ -204,4 +231,58 @@ timeSlider.addEventListener('input', () => {
     }
     
     filterTripsByTime();
-});
+}
+
+function updateFilteredData() {
+    let filteredDepartures, filteredArrivals;
+    if (timeFilter === -1) {
+        filteredDepartures = trips;
+        filteredArrivals = trips;
+    } else {
+        filteredDepartures = filterByMinute(departuresByMinute, timeFilter);
+        filteredArrivals = filterByMinute(arrivalsByMinute, timeFilter);
+    }
+
+    // Calculate station traffic
+    const departuresMap = d3.rollup(
+        filteredDepartures,
+        v => v.length,
+        d => d.start_station_id
+    );
+    const arrivalsMap = d3.rollup(
+        filteredArrivals,
+        v => v.length,
+        d => d.end_station_id
+    );
+
+    // Update station data with traffic
+    const filteredStations = stations.map(station => ({
+        ...station,
+        departures: departuresMap.get(station.short_name) || 0,
+        arrivals: arrivalsMap.get(station.short_name) || 0,
+        totalTraffic: (departuresMap.get(station.short_name) || 0) + 
+                     (arrivalsMap.get(station.short_name) || 0)
+    }));
+
+    // Update circle sizes with different scales for filtered vs unfiltered
+    const maxTraffic = d3.max(filteredStations, d => d.totalTraffic) || 1;
+    console.log('Max traffic:', maxTraffic);
+    console.log('Time filter:', timeFilter);
+
+    const radiusScale = d3.scaleSqrt()
+        .domain([0, maxTraffic])
+        .range(timeFilter === -1 ? [0, 25] : [3, 50]);  // Different ranges based on filter
+
+    // Update circles with transition
+    circles.data(filteredStations)
+        .transition()
+        .duration(500)
+        .attr('r', d => radiusScale(d.totalTraffic))
+        .attr('cx', d => getCoords(d).x)
+        .attr('cy', d => getCoords(d).y);
+
+    // Update tooltips
+    circles.selectAll('title').remove();
+    circles.append('title')
+        .text(d => `${d.name}\n${d.totalTraffic} trips (${d.departures} departures, ${d.arrivals} arrivals)`);
+}
